@@ -31,17 +31,50 @@ const PianoKeyboard = () => {
       return `${noteName}${octave}`;
     }
 
-    const root = Math.min(...notes);
-    const intervals = notes.map(note => (note - root + 12) % 12).sort((a, b) => a - b);
-    const rootName = noteNames[root % 12];
+    const sortedNotes = [...notes].sort((a, b) => a - b);
+    const intervals = sortedNotes.map(note => (note - sortedNotes[0] + 12) % 12);
+    const uniqueIntervals = Array.from(new Set(intervals)).sort((a, b) => a - b);
 
-    if (intervals.join(',') === '0,4,7') return `${rootName}`;
-    if (intervals.join(',') === '0,3,7') return `${rootName}m`;
-    if (intervals.join(',') === '0,4,7,10') return `${rootName}7`;
-    if (intervals.join(',') === '0,3,7,10') return `${rootName}m7`;
-    if (intervals.join(',') === '0,4,7,11') return `${rootName}maj7`;
+    const getChordType = (ints: number[]): [string, number] => {
+      const chordTypes = [
+        ['', [0, 4, 7]],
+        ['m', [0, 3, 7]],
+        ['dim', [0, 3, 6]],
+        ['aug', [0, 4, 8]],
+        ['sus4', [0, 5, 7]],
+        ['sus2', [0, 2, 7]],
+        ['7', [0, 4, 7, 10]],
+        ['m7', [0, 3, 7, 10]],
+        ['maj7', [0, 4, 7, 11]],
+        ['m(maj7)', [0, 3, 7, 11]],
+        ['dim7', [0, 3, 6, 9]],
+        ['6', [0, 4, 7, 9]],
+        ['m6', [0, 3, 7, 9]],
+      ];
 
-    return `${rootName}?`;
+      for (let i = 0; i < ints.length; i++) {
+        const shiftedIntervals = ints.map(int => (int - ints[i] + 12) % 12).sort((a, b) => a - b);
+        for (const [type, pattern] of chordTypes) {
+          if (pattern.every(int => shiftedIntervals.includes(int)) && 
+              shiftedIntervals.every(int => pattern.includes(int))) {
+            return [type, i];
+          }
+        }
+      }
+      return ['?', 0];
+    };
+
+    const [chordType, rootOffset] = getChordType(uniqueIntervals);
+    const rootIndex = (sortedNotes[0] + uniqueIntervals[rootOffset]) % 12;
+    const bassIndex = notes[0] % 12;
+    const rootName = noteNames[rootIndex];
+    const bassName = noteNames[bassIndex];
+
+    if (bassIndex !== rootIndex && chordType !== '?') {
+      return `${rootName}${chordType}/${bassName}`;
+    }
+
+    return `${rootName}${chordType}`;
   }, [noteNames]);
 
   const initializeAudioContext = useCallback(() => {
@@ -87,25 +120,24 @@ const PianoKeyboard = () => {
     }
   }, []);
 
-  const handleMIDIMessage = useCallback((event: NoteMessageEvent) => {
-    const extendedEvent = event as ExtendedNoteMessageEvent;
-    const velocity = extendedEvent.velocity;
-    if (event.type === 'noteon' && velocity > 0) {
+  const handleMIDIMessage = useCallback((event: WebMidi.MIDIMessageEvent) => {
+    const [status, note, velocity] = event.data;
+    if (status === 144 && velocity > 0) {
       setActiveNotes(prev => {
         const newNotes = new Set(prev);
-        newNotes.add(event.note.number);
+        newNotes.add(note);
         setDisplayText(getNoteOrChordName(Array.from(newNotes)));
         return newNotes;
       });
-      playNote(event.note.number);
-    } else if (event.type === 'noteoff' || (event.type === 'noteon' && velocity === 0)) {
+      playNote(note);
+    } else if (status === 128 || (status === 144 && velocity === 0)) {
       setActiveNotes(prev => {
         const newNotes = new Set(prev);
-        newNotes.delete(event.note.number);
+        newNotes.delete(note);
         setDisplayText(getNoteOrChordName(Array.from(newNotes)));
         return newNotes;
       });
-      stopNote(event.note.number);
+      stopNote(note);
     }
   }, [getNoteOrChordName, playNote, stopNote]);
 
